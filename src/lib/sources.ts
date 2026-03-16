@@ -53,17 +53,21 @@ import {
 /** Directory features whose remote content lives under a subdirectory. */
 const DIRECTORY_FEATURES: Feature[] = ["skills", "rules", "commands", "subagents"];
 
-/** File features whose remote content is a single file. */
-const FILE_FEATURES: Record<Feature, string> = {
+/** Single-file features mapped to their file names. Only non-directory features. */
+const FILE_FEATURE_NAMES: Partial<Record<Feature, string>> = {
   mcp: RULESYNC_MCP_FILE_NAME,
   hooks: RULESYNC_HOOKS_FILE_NAME,
   ignore: RULESYNC_AIIGNORE_FILE_NAME,
-  // Directory features don't use this mapping
-  skills: "",
-  rules: "",
-  commands: "",
-  subagents: "",
 };
+
+/** Get the file name for a single-file feature. */
+function getFileFeatureName(feature: Feature): string {
+  const name = FILE_FEATURE_NAMES[feature];
+  if (!name) {
+    throw new Error(`Feature "${feature}" is not a single-file feature.`);
+  }
+  return name;
+}
 
 /**
  * Check if a relative path belongs to any of the requested features.
@@ -75,7 +79,7 @@ function isPathInFeatures(relativePath: string, features: Feature[]): boolean {
     if (DIRECTORY_FEATURES.includes(feature)) {
       if (relativePath.startsWith(feature + "/")) return true;
     } else {
-      if (relativePath === FILE_FEATURES[feature]) return true;
+      if (relativePath === FILE_FEATURE_NAMES[feature]) return true;
     }
   }
   return false;
@@ -86,7 +90,7 @@ function featureToRemotePath(feature: Feature): string {
   if (DIRECTORY_FEATURES.includes(feature)) {
     return feature;
   }
-  return FILE_FEATURES[feature];
+  return getFileFeatureName(feature);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +273,35 @@ async function cleanSourceCache(params: { baseDir: string; sourceKey: string }):
   }
   await ensureDir(cachePath);
   return cachePath;
+}
+
+/**
+ * Finalize a source fetch: update lockfile, clean empty cache, log result.
+ */
+async function finalizeFetch(params: {
+  cachePath: string;
+  files: Record<string, LockedFile>;
+  lock: SourcesLock;
+  sourceKey: string;
+  requestedRef: string | undefined;
+  resolvedSha: string;
+}): Promise<{ fileCount: number; updatedLock: SourcesLock }> {
+  const { cachePath, files, lock, sourceKey, requestedRef, resolvedSha } = params;
+  const fileCount = Object.keys(files).length;
+
+  if (fileCount === 0) {
+    await removeDirectory(cachePath);
+  }
+
+  const updatedLock = setLockedSource(lock, sourceKey, {
+    requestedRef,
+    resolvedRef: resolvedSha,
+    resolvedAt: new Date().toISOString(),
+    files,
+  });
+
+  logger.info(`Fetched ${fileCount} file(s) from ${sourceKey}.`);
+  return { fileCount, updatedLock };
 }
 
 /**
@@ -457,7 +490,7 @@ async function fetchSourceViaGitHub(params: {
         const content = await withSemaphore(semaphore, () =>
           client.getFileContent(parsed.owner, parsed.repo, remotePath, ref),
         );
-        const fileName = FILE_FEATURES[feature];
+        const fileName = getFileFeatureName(feature);
         const result = await writeAndTrackFile({
           cachePath,
           relativePath: fileName,
@@ -477,22 +510,7 @@ async function fetchSourceViaGitHub(params: {
     }
   }
 
-  const fileCount = Object.keys(files).length;
-
-  // Remove empty cache directory to avoid leftover noise
-  if (fileCount === 0) {
-    await removeDirectory(cachePath);
-  }
-
-  const updatedLock = setLockedSource(lock, sourceKey, {
-    requestedRef,
-    resolvedRef: resolvedSha,
-    resolvedAt: new Date().toISOString(),
-    files,
-  });
-
-  logger.info(`Fetched ${fileCount} file(s) from ${sourceKey}.`);
-  return { fileCount, updatedLock };
+  return finalizeFetch({ cachePath, files, lock, sourceKey, requestedRef, resolvedSha });
 }
 
 // ---------------------------------------------------------------------------
@@ -593,20 +611,12 @@ async function fetchSourceViaGit(params: {
     files[result.relativePath] = { integrity: result.integrity };
   }
 
-  const fileCount = Object.keys(files).length;
-
-  // Remove empty cache directory to avoid leftover noise
-  if (fileCount === 0) {
-    await removeDirectory(cachePath);
-  }
-
-  const updatedLock = setLockedSource(lock, url, {
-    requestedRef,
-    resolvedRef: resolvedSha,
-    resolvedAt: new Date().toISOString(),
+  return finalizeFetch({
+    cachePath,
     files,
+    lock,
+    sourceKey: url,
+    requestedRef,
+    resolvedSha,
   });
-
-  logger.info(`Fetched ${fileCount} file(s) from ${url}.`);
-  return { fileCount, updatedLock };
 }

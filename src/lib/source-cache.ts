@@ -4,6 +4,7 @@ import type { SourceEntry } from "../config/config.js";
 import { RULESYNC_SOURCES_RELATIVE_DIR_PATH } from "../constants/rulesync-paths.js";
 import { formatError } from "../utils/error.js";
 import { directoryExists, fileExists, findFilesByGlobs, readFileContent } from "../utils/file.js";
+import { parseFrontmatter } from "../utils/frontmatter.js";
 import { logger } from "../utils/logger.js";
 import { normalizeSourceKey } from "./sources-lock.js";
 
@@ -138,6 +139,67 @@ export async function loadFileItemsFromSources(params: {
   }
 
   return items;
+}
+
+/**
+ * Parsed source item returned by loadParsedFileItemsFromSources.
+ * Contains the validated frontmatter, body, and raw content for each item.
+ */
+export type ParsedSourceItem<T> = {
+  name: string;
+  sourceKey: string;
+  frontmatter: T;
+  body: string;
+  content: string;
+};
+
+/**
+ * Load file items from source caches, then read, parse frontmatter, and validate.
+ * Returns only items that pass schema validation. Skips and warns on failures.
+ * This eliminates the duplicated read/parse/validate loop across processors.
+ */
+export async function loadParsedFileItemsFromSources<T>(params: {
+  sources: SourceCacheEntry[];
+  featureDirName: string;
+  globPattern: string;
+  localNames: Set<string>;
+  schema: { safeParse(data: unknown): { success: true; data: T } | { success: false } };
+}): Promise<ParsedSourceItem<T>[]> {
+  const { sources, featureDirName, globPattern, localNames, schema } = params;
+  const items = await loadFileItemsFromSources({
+    sources,
+    featureDirName,
+    globPattern,
+    localNames,
+  });
+  const results: ParsedSourceItem<T>[] = [];
+
+  for (const item of items) {
+    try {
+      const content = await readFileContent(item.path);
+      const { frontmatter, body } = parseFrontmatter(content, item.path);
+      const result = schema.safeParse(frontmatter);
+      if (!result.success) {
+        logger.warn(
+          `Skipping source ${featureDirName} "${item.name}" from ${item.sourceKey}: invalid frontmatter.`,
+        );
+        continue;
+      }
+      results.push({
+        name: item.name,
+        sourceKey: item.sourceKey,
+        frontmatter: result.data,
+        body: body.trim(),
+        content,
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to load source ${featureDirName} "${item.name}" from ${item.sourceKey}: ${formatError(error)}`,
+      );
+    }
+  }
+
+  return results;
 }
 
 // ---------------------------------------------------------------------------

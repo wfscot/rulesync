@@ -1,6 +1,6 @@
-# Declarative Skill Sources
+# Declarative Sources
 
-Rulesync can fetch skills from external repositories using the `install` command. Instead of manually running `fetch` for each skill source, declare them in your `rulesync.jsonc` and run `rulesync install` to resolve and fetch them. Then `rulesync generate` picks them up as local curated skills. Typical workflow: `rulesync install && rulesync generate`.
+Rulesync can fetch features (skills, rules, commands, subagents, mcp, hooks, ignore) from external repositories using the `install` command. Instead of manually running `fetch` for each source, declare them in your `rulesync.jsonc` and run `rulesync install` to resolve and fetch them. Then `rulesync generate` picks them up alongside local definitions. Typical workflow: `rulesync install && rulesync generate`.
 
 ## Configuration
 
@@ -12,21 +12,24 @@ Add a `sources` array to your `rulesync.jsonc`:
   "targets": ["copilot", "claudecode"],
   "features": ["rules", "skills"],
   "sources": [
-    // Fetch all skills from a GitHub repository (default transport)
+    // Fetch all features from a GitHub repository (default transport)
     { "source": "owner/repo" },
+
+    // Fetch only specific feature types
+    { "source": "owner/repo", "features": ["rules", "commands"] },
 
     // Fetch only specific skills by name
     { "source": "anthropics/skills", "skills": ["skill-creator"] },
 
     // With ref pinning and subdirectory path (same syntax as fetch command)
-    { "source": "owner/repo@v1.0.0:path/to/skills" },
+    { "source": "owner/repo@v1.0.0:path/to/rulesync" },
 
     // Git transport — works with any git remote (Azure DevOps, Bitbucket, etc.)
     {
       "source": "https://dev.azure.com/org/project/_git/repo",
       "transport": "git",
       "ref": "main",
-      "path": "exports/skills",
+      "path": "exports/rulesync",
     },
 
     // Git transport with a local repository
@@ -37,44 +40,46 @@ Add a `sources` array to your `rulesync.jsonc`:
 
 Each entry in `sources` accepts:
 
-| Property    | Type       | Description                                                                                                                      |
-| ----------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `source`    | `string`   | Repository source. For GitHub transport: `owner/repo` or `owner/repo@ref:path`. For git transport: a full git URL.               |
-| `skills`    | `string[]` | Optional list of skill names to fetch. If omitted, all skills are fetched.                                                       |
-| `transport` | `string`   | `"github"` (default) uses the GitHub REST API. `"git"` uses git CLI and works with any git remote.                               |
-| `ref`       | `string`   | Branch, tag, or ref to fetch from. Defaults to the remote's default branch. For GitHub transport, use the `@ref` source syntax.  |
-| `path`      | `string`   | Path to the skills directory within the repository. Defaults to `"skills"`. For GitHub transport, use the `:path` source syntax. |
+| Property    | Type       | Description                                                                                                                                                                                                                                                                |
+| ----------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`    | `string`   | Repository source. For GitHub transport: `owner/repo` or `owner/repo@ref:path`. For git transport: a full git URL.                                                                                                                                                         |
+| `features`  | `string[]` | Optional list of feature types to fetch (`skills`, `rules`, `commands`, `subagents`, `mcp`, `hooks`, `ignore`, or `*`). Defaults to all (`["*"]`).                                                                                                                         |
+| `skills`    | `string[]` | Optional list of skill names to fetch. If omitted, all skills are fetched.                                                                                                                                                                                                 |
+| `transport` | `string`   | `"github"` (default) uses the GitHub REST API. `"git"` uses git CLI and works with any git remote.                                                                                                                                                                         |
+| `ref`       | `string`   | Branch, tag, or ref to fetch from. Defaults to the remote's default branch. For GitHub transport, use the `@ref` source syntax.                                                                                                                                            |
+| `path`      | `string`   | Base path within the repository where rulesync content lives. All feature directories (skills/, rules/, etc.) and feature files (mcp.json, etc.) are resolved relative to this path. Defaults to the repository root. For GitHub transport, use the `:path` source syntax. |
 
 ## How It Works
 
 When `rulesync install` runs and `sources` is configured:
 
-1. **Lockfile resolution** — Each source's ref is resolved to a commit SHA and stored in `rulesync.lock` (at the project root). On subsequent runs the locked SHA is reused for deterministic builds.
-2. **Remote skill listing** — The `skills/` directory (or the path specified in the source URL) is listed from the remote repository.
-3. **Filtering** — If `skills` is specified, only matching skill directories are fetched.
-4. **Precedence rules**:
-   - **Local skills always win** — Skills in `.rulesync/skills/` (not in `.curated/`) take precedence; a remote skill with the same name is skipped.
-   - **First-declared source wins** — If two sources provide a skill with the same name, the one declared first in the `sources` array is used.
-5. **Output** — Fetched skills are written to `.rulesync/skills/.curated/<skill-name>/`. This directory is automatically added to `.gitignore` by `rulesync gitignore`.
+1. **Lockfile resolution** -- Each source's ref is resolved to a commit SHA and stored in `rulesync.lock` (at the project root). On subsequent runs the locked SHA is reused for deterministic builds.
+2. **Feature fetching** -- For each source, the requested features are fetched from the remote repository. Directory features (skills, rules, commands, subagents) are fetched recursively. Single-file features (mcp.json, hooks.json, .aiignore) are fetched individually.
+3. **Source cache** -- Fetched content is written to `.rulesync/.sources/<source-key>/`, preserving the rulesync directory structure. This cache is used by `rulesync generate`.
+4. **Filtering** -- If `skills` is specified, only matching skill directories are fetched. If `features` is specified, only matching feature types are fetched.
+5. **Precedence rules**:
+   - **Local items always win** -- Items in `.rulesync/<feature>/` take precedence; a remote item with the same name is skipped.
+   - **First-declared source wins** -- If two sources provide an item with the same name, the one declared first in the `sources` array is used.
+   - **Single-file features merge** -- For mcp.json, hooks.json, and .aiignore, content is merged across sources. Local content is applied first, then sources in declaration order. Server entries, event keys, and ignore lines are merged with local values taking precedence.
 
 ## CLI Options
 
 The `install` command accepts these flags:
 
-| Flag              | Description                                                                                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--update`        | Force re-resolve all source refs, ignoring the lockfile (useful to pull new updates).                                                                        |
-| `--frozen`        | Fail if lockfile is missing or out of sync. Fetches missing skills using locked refs without updating the lockfile. Useful for CI to ensure reproducibility. |
-| `--token <token>` | GitHub token for private repositories.                                                                                                                       |
+| Flag              | Description                                                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--update`        | Force re-resolve all source refs, ignoring the lockfile (useful to pull new updates).                                                                         |
+| `--frozen`        | Fail if lockfile is missing or out of sync. Fetches missing content using locked refs without updating the lockfile. Useful for CI to ensure reproducibility. |
+| `--token <token>` | GitHub token for private repositories.                                                                                                                        |
 
 ```bash
-# Install skills using locked refs
+# Install sources using locked refs
 rulesync install
 
 # Force update to latest refs
 rulesync install --update
 
-# Strict CI mode — fail if lockfile doesn't cover all sources (missing locked skills are fetched)
+# Strict CI mode — fail if lockfile doesn't cover all sources
 rulesync install --frozen
 
 # Install then generate
@@ -86,19 +91,20 @@ rulesync generate
 
 ## Lockfile
 
-The lockfile at `rulesync.lock` (at the project root) records the resolved commit SHA and per-skill integrity hashes for each source so that builds are reproducible. It is safe to commit this file. An example:
+The lockfile at `rulesync.lock` (at the project root) records the resolved commit SHA and per-file integrity hashes for each source so that builds are reproducible. It is safe to commit this file. An example:
 
 ```json
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "sources": {
-    "owner/skill-repo": {
+    "owner/repo": {
       "requestedRef": "main",
       "resolvedRef": "abc123def456...",
       "resolvedAt": "2025-01-15T12:00:00.000Z",
-      "skills": {
-        "my-skill": { "integrity": "sha256-abcdef..." },
-        "another-skill": { "integrity": "sha256-123456..." }
+      "files": {
+        "skills/my-skill/SKILL.md": { "integrity": "sha256-abcdef..." },
+        "rules/coding-standards.md": { "integrity": "sha256-123456..." },
+        "mcp.json": { "integrity": "sha256-789abc..." }
       }
     }
   }
@@ -123,11 +129,11 @@ GITHUB_TOKEN=$(gh auth token) npx rulesync install
 > [!TIP]
 > The `install` command also accepts a `--token` flag for explicit authentication: `rulesync install --token ghp_xxxx`.
 
-## Curated vs Local Skills
+## Source Cache vs Local Content
 
-| Location                            | Type    | Precedence | Committed to Git |
-| ----------------------------------- | ------- | ---------- | ---------------- |
-| `.rulesync/skills/<name>/`          | Local   | Highest    | Yes              |
-| `.rulesync/skills/.curated/<name>/` | Curated | Lower      | No (gitignored)  |
+| Location                                 | Type   | Precedence | Committed to Git |
+| ---------------------------------------- | ------ | ---------- | ---------------- |
+| `.rulesync/<feature>/`                   | Local  | Highest    | Yes              |
+| `.rulesync/.sources/<source>/<feature>/` | Source | Lower      | No (gitignored)  |
 
-When both a local and a curated skill share the same name, the local skill is used and the remote one is not fetched.
+When both a local and a source item share the same name, the local item is used and the remote one is skipped.

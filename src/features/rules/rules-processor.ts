@@ -9,14 +9,13 @@ import {
   RULESYNC_RULES_RELATIVE_DIR_PATH,
   RULESYNC_SUBAGENTS_RELATIVE_DIR_PATH,
 } from "../../constants/rulesync-paths.js";
-import { type SourceCacheEntry, loadFileItemsFromSources } from "../../lib/source-cache.js";
+import { type SourceCacheEntry, loadParsedFileItemsFromSources } from "../../lib/source-cache.js";
 import { FeatureProcessor } from "../../types/feature-processor.js";
 import { RulesyncFile } from "../../types/rulesync-file.js";
 import { ToolFile } from "../../types/tool-file.js";
 import { ToolTarget } from "../../types/tool-targets.js";
 import { formatError } from "../../utils/error.js";
-import { checkPathTraversal, findFilesByGlobs, readFileContent } from "../../utils/file.js";
-import { parseFrontmatter } from "../../utils/frontmatter.js";
+import { checkPathTraversal, findFilesByGlobs } from "../../utils/file.js";
 import { logger } from "../../utils/logger.js";
 import { AgentsmdCommand } from "../commands/agentsmd-command.js";
 import { CommandsProcessor } from "../commands/commands-processor.js";
@@ -778,40 +777,26 @@ export class RulesProcessor extends FeatureProcessor {
 
     // Load rules from source caches
     const localRuleNames = new Set(rulesyncRules.map((r) => basename(r.getRelativeFilePath())));
-    const sourceItems = await loadFileItemsFromSources({
+    const parsedItems = await loadParsedFileItemsFromSources({
       sources: this.sourceCaches,
       featureDirName: "rules",
       globPattern: "**/*.md",
       localNames: localRuleNames,
+      schema: RulesyncRuleFrontmatterSchema,
     });
 
-    for (const item of sourceItems) {
-      try {
-        const content = await readFileContent(item.path);
-        const { frontmatter, body } = parseFrontmatter(content, item.path);
-        const result = RulesyncRuleFrontmatterSchema.safeParse(frontmatter);
-        if (!result.success) {
-          logger.warn(
-            `Skipping source rule "${item.name}" from ${item.sourceKey}: invalid frontmatter.`,
-          );
-          continue;
-        }
-        // Source rules cannot be root or localRoot
-        const sourceFrontmatter = { ...result.data, root: undefined, localRoot: undefined };
-        rulesyncRules.push(
-          new RulesyncRule({
-            baseDir: process.cwd(),
-            relativeDirPath: RULESYNC_RULES_RELATIVE_DIR_PATH,
-            relativeFilePath: item.name,
-            frontmatter: sourceFrontmatter,
-            body: body.trim(),
-          }),
-        );
-      } catch (error) {
-        logger.warn(
-          `Failed to load source rule "${item.name}" from ${item.sourceKey}: ${formatError(error)}`,
-        );
-      }
+    for (const item of parsedItems) {
+      // Source rules cannot be root or localRoot
+      const sourceFrontmatter = { ...item.frontmatter, root: undefined, localRoot: undefined };
+      rulesyncRules.push(
+        new RulesyncRule({
+          baseDir: process.cwd(),
+          relativeDirPath: RULESYNC_RULES_RELATIVE_DIR_PATH,
+          relativeFilePath: item.name,
+          frontmatter: sourceFrontmatter,
+          body: item.body,
+        }),
+      );
     }
 
     const factory = this.getFactory(this.toolTarget);

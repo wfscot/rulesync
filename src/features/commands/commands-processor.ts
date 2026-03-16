@@ -2,14 +2,13 @@ import { basename, join, relative } from "node:path";
 
 import { z } from "zod/mini";
 
-import { type SourceCacheEntry, loadFileItemsFromSources } from "../../lib/source-cache.js";
+import { type SourceCacheEntry, loadParsedFileItemsFromSources } from "../../lib/source-cache.js";
 import { FeatureProcessor } from "../../types/feature-processor.js";
 import { RulesyncFile } from "../../types/rulesync-file.js";
 import { ToolFile } from "../../types/tool-file.js";
 import type { ToolTarget } from "../../types/tool-targets.js";
 import { formatError } from "../../utils/error.js";
-import { checkPathTraversal, findFilesByGlobs, readFileContent } from "../../utils/file.js";
-import { parseFrontmatter } from "../../utils/frontmatter.js";
+import { checkPathTraversal, findFilesByGlobs } from "../../utils/file.js";
 import { logger } from "../../utils/logger.js";
 import { AgentsmdCommand } from "./agentsmd-command.js";
 import { AntigravityCommand } from "./antigravity-command.js";
@@ -438,39 +437,25 @@ export class CommandsProcessor extends FeatureProcessor {
     const localCommandNames = new Set(
       rulesyncCommands.map((c) => basename(c.getRelativeFilePath())),
     );
-    const sourceItems = await loadFileItemsFromSources({
+    const parsedItems = await loadParsedFileItemsFromSources({
       sources: this.sourceCaches,
       featureDirName: "commands",
       globPattern: "**/*.md",
       localNames: localCommandNames,
+      schema: RulesyncCommandFrontmatterSchema,
     });
 
-    for (const item of sourceItems) {
-      try {
-        const content = await readFileContent(item.path);
-        const { frontmatter, body } = parseFrontmatter(content, item.path);
-        const result = RulesyncCommandFrontmatterSchema.safeParse(frontmatter);
-        if (!result.success) {
-          logger.warn(
-            `Skipping source command "${item.name}" from ${item.sourceKey}: invalid frontmatter.`,
-          );
-          continue;
-        }
-        rulesyncCommands.push(
-          new RulesyncCommand({
-            baseDir: process.cwd(),
-            relativeDirPath: basePath,
-            relativeFilePath: item.name,
-            frontmatter: { ...frontmatter, ...result.data },
-            body: body.trim(),
-            fileContent: content,
-          }),
-        );
-      } catch (error) {
-        logger.warn(
-          `Failed to load source command "${item.name}" from ${item.sourceKey}: ${formatError(error)}`,
-        );
-      }
+    for (const item of parsedItems) {
+      rulesyncCommands.push(
+        new RulesyncCommand({
+          baseDir: process.cwd(),
+          relativeDirPath: basePath,
+          relativeFilePath: item.name,
+          frontmatter: item.frontmatter,
+          body: item.body,
+          fileContent: item.content,
+        }),
+      );
     }
 
     logger.debug(`Successfully loaded ${rulesyncCommands.length} rulesync commands`);

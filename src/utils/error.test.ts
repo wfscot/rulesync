@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod/mini";
 
-import { formatError } from "./error.js";
+import { formatError, isFileNotFoundError } from "./error.js";
 
 describe("formatError", () => {
   it("should format a single validation error without path", () => {
@@ -137,5 +137,27 @@ describe("formatError", () => {
   it("should convert object to string", () => {
     const formatted = formatError({ foo: "bar" });
     expect(formatted).toBe("[object Object]");
+  });
+});
+
+describe("isFileNotFoundError", () => {
+  it("should return true for ENOENT errors", () => {
+    const error = Object.assign(new Error("no such file"), { code: "ENOENT" });
+    expect(isFileNotFoundError(error)).toBe(true);
+  });
+
+  it("should return false for other error codes", () => {
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    expect(isFileNotFoundError(error)).toBe(false);
+  });
+
+  it("should return false for plain errors without code", () => {
+    expect(isFileNotFoundError(new Error("generic"))).toBe(false);
+  });
+
+  it("should return false for non-Error values", () => {
+    expect(isFileNotFoundError("ENOENT")).toBe(false);
+    expect(isFileNotFoundError(null)).toBe(false);
+    expect(isFileNotFoundError(undefined)).toBe(false);
   });
 });

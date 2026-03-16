@@ -2,19 +2,13 @@ import { basename, join } from "node:path";
 
 import { z } from "zod/mini";
 
-import { type SourceCacheEntry, loadFileItemsFromSources } from "../../lib/source-cache.js";
+import { type SourceCacheEntry, loadParsedFileItemsFromSources } from "../../lib/source-cache.js";
 import { FeatureProcessor } from "../../types/feature-processor.js";
 import { RulesyncFile } from "../../types/rulesync-file.js";
 import { ToolFile } from "../../types/tool-file.js";
 import type { ToolTarget } from "../../types/tool-targets.js";
 import { formatError } from "../../utils/error.js";
-import {
-  directoryExists,
-  findFilesByGlobs,
-  listDirectoryFiles,
-  readFileContent,
-} from "../../utils/file.js";
-import { parseFrontmatter } from "../../utils/frontmatter.js";
+import { directoryExists, findFilesByGlobs, listDirectoryFiles } from "../../utils/file.js";
 import { logger } from "../../utils/logger.js";
 import { AgentsmdSubagent } from "./agentsmd-subagent.js";
 import { ClaudecodeSubagent } from "./claudecode-subagent.js";
@@ -329,38 +323,24 @@ export class SubagentsProcessor extends FeatureProcessor {
 
     // Load subagents from source caches
     const localNames = new Set(rulesyncSubagents.map((s) => basename(s.getRelativeFilePath())));
-    const sourceItems = await loadFileItemsFromSources({
+    const parsedItems = await loadParsedFileItemsFromSources({
       sources: this.sourceCaches,
       featureDirName: "subagents",
       globPattern: "*.md",
       localNames,
+      schema: RulesyncSubagentFrontmatterSchema,
     });
 
-    for (const item of sourceItems) {
-      try {
-        const content = await readFileContent(item.path);
-        const { frontmatter, body } = parseFrontmatter(content, item.path);
-        const result = RulesyncSubagentFrontmatterSchema.safeParse(frontmatter);
-        if (!result.success) {
-          logger.warn(
-            `Skipping source subagent "${item.name}" from ${item.sourceKey}: invalid frontmatter.`,
-          );
-          continue;
-        }
-        rulesyncSubagents.push(
-          new RulesyncSubagent({
-            baseDir: process.cwd(),
-            relativeDirPath: RulesyncSubagent.getSettablePaths().relativeDirPath,
-            relativeFilePath: item.name,
-            frontmatter: { ...frontmatter, ...result.data },
-            body: body.trim(),
-          }),
-        );
-      } catch (error) {
-        logger.warn(
-          `Failed to load source subagent "${item.name}" from ${item.sourceKey}: ${formatError(error)}`,
-        );
-      }
+    for (const item of parsedItems) {
+      rulesyncSubagents.push(
+        new RulesyncSubagent({
+          baseDir: process.cwd(),
+          relativeDirPath: RulesyncSubagent.getSettablePaths().relativeDirPath,
+          relativeFilePath: item.name,
+          frontmatter: item.frontmatter,
+          body: item.body,
+        }),
+      );
     }
 
     logger.debug(`Successfully loaded ${rulesyncSubagents.length} rulesync subagents`);
