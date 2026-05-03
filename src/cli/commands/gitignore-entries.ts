@@ -1,5 +1,8 @@
 import { GITIGNORE_DESTINATION_KEY } from "../../config/config.js";
-import { RULESYNC_CURATED_SKILLS_RELATIVE_DIR_PATH } from "../../constants/rulesync-paths.js";
+import {
+  RULESYNC_CURATED_SKILLS_RELATIVE_DIR_PATH,
+  RULESYNC_SOURCES_RELATIVE_DIR_PATH,
+} from "../../constants/rulesync-paths.js";
 import {
   ALL_FEATURES_WITH_WILDCARD,
   type Feature,
@@ -29,6 +32,11 @@ export const GITIGNORE_ENTRY_REGISTRY: ReadonlyArray<GitignoreEntryTag> = [
     target: "common",
     feature: "general",
     entry: `${RULESYNC_CURATED_SKILLS_RELATIVE_DIR_PATH}/`,
+  },
+  {
+    target: "common",
+    feature: "general",
+    entry: `${RULESYNC_SOURCES_RELATIVE_DIR_PATH}/`,
   },
   { target: "common", feature: "general", entry: ".rulesync/rules/*.local.md" },
   { target: "common", feature: "general", entry: "rulesync.local.jsonc" },

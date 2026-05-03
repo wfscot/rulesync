@@ -30,7 +30,7 @@ describe("sources-lock", () => {
   describe("createEmptyLock", () => {
     it("should return an empty lock structure", () => {
       const lock = createEmptyLock();
-      expect(lock).toEqual({ lockfileVersion: 1, sources: {} });
+      expect(lock).toEqual({ lockfileVersion: LOCKFILE_VERSION, sources: {} });
     });
   });
 
@@ -49,7 +49,7 @@ describe("sources-lock", () => {
 
     it("should return empty lock when file does not exist", async () => {
       const lock = await readLockFile({ logger, projectRoot: testDir });
-      expect(lock).toEqual({ lockfileVersion: 1, sources: {} });
+      expect(lock).toEqual({ lockfileVersion: LOCKFILE_VERSION, sources: {} });
     });
 
     it("should parse a valid lockfile", async () => {
@@ -83,7 +83,7 @@ describe("sources-lock", () => {
       await writeFileContent(join(testDir, RULESYNC_SOURCES_LOCK_RELATIVE_FILE_PATH), "not-json");
 
       const lock = await readLockFile({ logger, projectRoot: testDir });
-      expect(lock).toEqual({ lockfileVersion: 1, sources: {} });
+      expect(lock).toEqual({ lockfileVersion: LOCKFILE_VERSION, sources: {} });
     });
 
     it("should return empty lock for invalid schema", async () => {
@@ -93,7 +93,7 @@ describe("sources-lock", () => {
       );
 
       const lock = await readLockFile({ logger, projectRoot: testDir });
-      expect(lock).toEqual({ lockfileVersion: 1, sources: {} });
+      expect(lock).toEqual({ lockfileVersion: LOCKFILE_VERSION, sources: {} });
     });
 
     it("should migrate legacy lockfile format", async () => {
@@ -114,7 +114,7 @@ describe("sources-lock", () => {
       const lock = await readLockFile({ logger, projectRoot: testDir });
 
       expect(lock).toEqual({
-        lockfileVersion: 1,
+        lockfileVersion: LOCKFILE_VERSION,
         sources: {
           "org/repo": {
             resolvedRef: "abc123",
@@ -128,6 +128,48 @@ describe("sources-lock", () => {
       expect(logger.info).toHaveBeenCalledWith(
         expect.stringContaining("Migrated legacy sources lockfile"),
       );
+    });
+
+    it("should upgrade a v1 lockfile to v2 on read", async () => {
+      const v1Content = JSON.stringify({
+        lockfileVersion: 1,
+        sources: {
+          "org/repo": {
+            resolvedRef: VALID_SHA,
+            skills: { "skill-a": { integrity: "sha256-x" } },
+          },
+        },
+      });
+
+      await writeFileContent(join(testDir, RULESYNC_SOURCES_LOCK_RELATIVE_FILE_PATH), v1Content);
+
+      const lock = await readLockFile({ logger, projectRoot: testDir });
+
+      expect(lock.lockfileVersion).toBe(LOCKFILE_VERSION);
+      expect(lock.sources["org/repo"]).toEqual({
+        resolvedRef: VALID_SHA,
+        skills: { "skill-a": { integrity: "sha256-x" } },
+      });
+    });
+
+    it("should accept a v2 lockfile that includes a features field", async () => {
+      const v2Content = JSON.stringify({
+        lockfileVersion: 2,
+        sources: {
+          "org/repo": {
+            resolvedRef: VALID_SHA,
+            features: ["skills", "rules"],
+            skills: { "skill-a": { integrity: "sha256-x" } },
+          },
+        },
+      });
+
+      await writeFileContent(join(testDir, RULESYNC_SOURCES_LOCK_RELATIVE_FILE_PATH), v2Content);
+
+      const lock = await readLockFile({ logger, projectRoot: testDir });
+
+      expect(lock.lockfileVersion).toBe(2);
+      expect(lock.sources["org/repo"]?.features).toEqual(["skills", "rules"]);
     });
   });
 

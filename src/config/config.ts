@@ -4,6 +4,7 @@ import { minLength, optional, refine, z } from "zod/mini";
 
 import {
   ALL_FEATURES,
+  ALL_FEATURES_WITH_WILDCARD,
   Feature,
   FeatureOptions,
   Features,
@@ -38,6 +39,11 @@ export const GITIGNORE_DESTINATION_KEY = "gitignoreDestination";
 export const SourceEntrySchema = z.object({
   source: z.string().check(minLength(1, "source must be a non-empty string")),
   skills: optional(z.array(z.string())),
+  // Optional list of primitive features to fetch from this source. When
+  // omitted, the entry uses legacy behavior (skills only). When present,
+  // fetch is restricted to the listed features. Use `["*"]` for "all
+  // currently-known primitives".
+  features: optional(z.array(z.enum(ALL_FEATURES_WITH_WILDCARD))),
   transport: optional(z.enum(["github", "git"])),
   ref: optional(
     z.string().check(

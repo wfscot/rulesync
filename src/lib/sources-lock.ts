@@ -7,8 +7,20 @@ import { RULESYNC_SOURCES_LOCK_RELATIVE_FILE_PATH } from "../constants/rulesync-
 import { fileExists, readFileContent, writeFileContent } from "../utils/file.js";
 import type { Logger } from "../utils/logger.js";
 
-/** Current lockfile format version. Bump when the schema changes. */
-export const LOCKFILE_VERSION = 1;
+/**
+ * Current lockfile format version.
+ *
+ * Version history:
+ *   v0 — implicit version (no `lockfileVersion` field). `skills` was a string
+ *        array of skill names; no integrity tracking.
+ *   v1 — `lockfileVersion: 1`. `skills` became `Record<name, { integrity }>`,
+ *        adding SHA-256 content hashes per skill.
+ *   v2 — `lockfileVersion: 2`. Adds optional `features` field on each locked
+ *        source entry to record which primitive features were fetched (legacy
+ *        skill-only entries omit this field). Foundation for fetching all 8
+ *        primitives from a single source.
+ */
+export const LOCKFILE_VERSION = 2;
 
 /**
  * Schema for a single locked skill entry with content integrity.
@@ -27,6 +39,12 @@ export const LockedSourceSchema = z.object({
     .string()
     .check(refine((v) => /^[0-9a-f]{40}$/.test(v), "resolvedRef must be a 40-character hex SHA")),
   resolvedAt: optional(z.string()),
+  // Optional list of features fetched from this source (rules, ignore, mcp,
+  // subagents, commands, skills, hooks, permissions). Omitted = legacy
+  // skills-only entry. Validation of feature names is deferred — unknown
+  // values from older clients are tolerated to keep the lockfile robust
+  // across version upgrades.
+  features: optional(z.array(z.string())),
   skills: z.record(z.string(), LockedSkillSchema),
 });
 export type LockedSource = z.infer<typeof LockedSourceSchema>;
@@ -53,8 +71,8 @@ const LegacySourcesLockSchema = z.object({
 });
 
 /**
- * Migrate a legacy lockfile (string[] skills, no version) to the current format.
- * Skills get empty integrity since we can't compute it retroactively.
+ * Migrate a legacy v0 lockfile (string[] skills, no version) to the current
+ * format. Skills get empty integrity since we can't compute it retroactively.
  */
 function migrateLegacyLock(params: {
   legacy: z.infer<typeof LegacySourcesLockSchema>;
@@ -73,7 +91,7 @@ function migrateLegacyLock(params: {
     };
   }
   logger.info(
-    "Migrated legacy sources lockfile to version 1. Run 'rulesync install --update' to populate integrity hashes.",
+    `Migrated legacy sources lockfile to version ${LOCKFILE_VERSION}. Run 'rulesync install --update' to populate integrity hashes.`,
   );
   return { lockfileVersion: LOCKFILE_VERSION, sources };
 }
@@ -105,13 +123,21 @@ export async function readLockFile(params: {
     const content = await readFileContent(lockPath);
     const data = JSON.parse(content);
 
-    // Try current schema first
+    // Try current schema first. v1 lockfiles parse cleanly under the v2
+    // schema (the new `features` field is optional), so we just need to
+    // upgrade the version stamp.
     const result = SourcesLockSchema.safeParse(data);
     if (result.success) {
+      if (result.data.lockfileVersion < LOCKFILE_VERSION) {
+        logger.debug(
+          `Upgrading sources lockfile from version ${result.data.lockfileVersion} to ${LOCKFILE_VERSION}.`,
+        );
+        return { ...result.data, lockfileVersion: LOCKFILE_VERSION };
+      }
       return result.data;
     }
 
-    // Try legacy schema (no lockfileVersion, skills as string[])
+    // Try legacy v0 schema (no lockfileVersion, skills as string[])
     const legacyResult = LegacySourcesLockSchema.safeParse(data);
     if (legacyResult.success) {
       return migrateLegacyLock({ legacy: legacyResult.data, logger });
