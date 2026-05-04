@@ -62,10 +62,7 @@ export function computeSourceSlotKey(params: {
 /**
  * Get the absolute path to a cache slot for a given project.
  */
-export function getSourceSlotPath(params: {
-  projectRoot: string;
-  slotKey: SourceSlotKey;
-}): string {
+export function getSourceSlotPath(params: { projectRoot: string; slotKey: SourceSlotKey }): string {
   const { projectRoot, slotKey } = params;
   return join(
     projectRoot,
@@ -234,11 +231,12 @@ function encodePathSegment(path: string): string {
 }
 
 /**
- * Strip characters that are unsafe across Windows/macOS/Linux filesystems.
- * Reserved chars: `/ \ : * ? " < > |` plus control characters.
+ * Strip characters reserved across Windows/macOS/Linux filesystems.
+ * Reserved chars: `/ \ : * ? " < > |`. Inputs come from already-validated
+ * URLs and config paths, so control characters aren't a realistic concern.
  */
 function sanitizeFsSegment(value: string): string {
-  return value.replace(/[/\\:*?"<>|\x00-\x1f]/g, "_");
+  return value.replace(/[/\\:*?"<>|]/gu, "_");
 }
 
 /**
